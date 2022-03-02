@@ -45,8 +45,8 @@ def is_frc():
     return True
 
 
-CAMERA_FPS = 30
-DESIRED_FPS = 5
+CAMERA_FPS = 25
+DESIRED_FPS = 10		# seem to actually get 1/2 this.  Don't know why.....
 PREVIEW_WIDTH = 200
 PREVIEW_HEIGHT = 200
 
@@ -186,6 +186,13 @@ elif family == 'YOLO':
     detectionNodeType = dai.node.YoloSpatialDetectionNetwork
 else:
     raise Exception(f'Unknown NN_family: {family}')
+
+try:
+    bbfraction = nnConfig['bb_fraction']
+except KeyError:
+    bbfraction = bbfraction			# No change fromn default
+
+
 
 # Create the spatial detection network node - either MobileNet or YOLO (from above)
 
@@ -347,6 +354,8 @@ with dai.Device(pipeline) as device:
             else:
                 color = (0, 0, 255)
 
+            #print(detection.spatialCoordinates.x, detection.spatialCoordinates.y, detection.spatialCoordinates.z)
+
             x = round(int(detection.spatialCoordinates.x * INCHES_PER_MILLIMETER), 1)
             y = round(int(detection.spatialCoordinates.y * INCHES_PER_MILLIMETER), 1)
             z = round(int(detection.spatialCoordinates.z * INCHES_PER_MILLIMETER), 1)
@@ -370,7 +379,7 @@ with dai.Device(pipeline) as device:
             cv2.imshow("depth", depthFrameColor)
             cv2.imshow("preview", frame)
 
-        output.putFrame(frame)
+        # output.putFrame(frame)
 
         # Take our list of objects found and dump it to JSON format.  Then write the JSON string to the
         # ObjectTracker key in the Network Tables
@@ -387,5 +396,5 @@ with dai.Device(pipeline) as device:
 
         frame_counter += 1
 
-        if cv2.waitKey(1) == ord('q'):
+        if hasDisplay and cv2.waitKey(1) == ord('q'):
             break
