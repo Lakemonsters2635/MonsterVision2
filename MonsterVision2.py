@@ -45,8 +45,6 @@ def is_frc():
     return True
 
 
-server = False  # TODO
-team = None  # TODO
 CAMERA_FPS = 30
 DESIRED_FPS = 5
 PREVIEW_WIDTH = 200
@@ -56,7 +54,6 @@ INCHES_PER_MILLIMETER = 39.37 / 1000
 bbfraction = 0.2
 
 hasDisplay = not is_romi() and not is_frc()
-hasDisplay = True       # TODO
 
 
 def read_nn_config():
@@ -310,6 +307,8 @@ with dai.Device(pipeline) as device:
                 xmax = int(bottomRight.x)
                 ymax = int(bottomRight.y)
 
+#                print(xmin, ymin, xmax, ymax)
+
                 cv2.rectangle(depthFrameColor, (xmin, ymin), (xmax, ymax), 255, cv2.FONT_HERSHEY_SCRIPT_SIMPLEX)
 
         # If the frame is available, draw bounding boxes on it and show the frame
@@ -363,7 +362,7 @@ with dai.Device(pipeline) as device:
 
             objects.append({"objectLabel": LABELS[detection.label], "x": x,
                             "y": y, "z": z,
-                            "confidence": round(detection.confidence, 1)})
+                            "confidence": round(detection.confidence, 2)})
 
         cv2.putText(frame, "NN fps: {:.2f}".format(fps), (2, frame.shape[0] - 4), cv2.FONT_HERSHEY_TRIPLEX, 0.4,
                     (255, 255, 255))
