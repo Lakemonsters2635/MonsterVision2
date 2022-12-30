@@ -3,12 +3,19 @@
 from pathlib import Path
 import sys
 import cv2
+import apriltag
 import depthai as dai
-# import numpy as np
+import numpy as np
+import math
 import time
 from networktables import NetworkTables
 from networktables import NetworkTablesInstance
-from cscore import CameraServer
+cscoreAvailable = True
+try:
+    from cscore import CameraServer
+except ImportError:
+    cscoreAvailable = False
+
 import json
 # import socket
 
@@ -53,8 +60,8 @@ PREVIEW_HEIGHT = 200
 INCHES_PER_MILLIMETER = 39.37 / 1000
 bbfraction = 0.2
 
-hasDisplay = not is_romi() and not is_frc()
-
+# hasDisplay = not is_romi() and not is_frc()
+hasDisplay = False
 
 def read_nn_config():
     try:
@@ -70,6 +77,48 @@ def read_nn_config():
         return {}
 
     return j
+
+# Required information for calculating spatial coordinates on the host
+monoHFOV = np.deg2rad(73.5)
+
+# Helper function for calc_spatials
+def calc_angle(offset, depthWidth):
+    return math.atan(math.tan(monoHFOV / 2.0) * offset / (depthWidth / 2.0))
+
+# Calculate spatial coordinates from depth map and bounding box (ROI)
+def calc_spatials(bbox, centroidX, centroidY, depth, depthWidth, averaging_method=np.mean):
+    xmin, ymin, xmax, ymax = bbox
+    # Decrese the ROI to 1/3 of the original ROI
+    deltaX = int((xmax - xmin) * 0.33)
+    deltaY = int((ymax - ymin) * 0.33)
+    xmin += deltaX
+    ymin += deltaY
+    xmax -= deltaX
+    ymax -= deltaY
+    if xmin > xmax:  # bbox flipped
+        xmin, xmax = xmax, xmin
+    if ymin > ymax:  # bbox flipped
+        ymin, ymax = ymax, ymin
+
+    if xmin == xmax or ymin == ymax: # Box of size zero
+        return None
+
+    # Calculate the average depth in the ROI.
+    depthROI = depth[ymin:ymax, xmin:xmax]
+    averageDepth = averaging_method(depthROI)
+
+    # mid = int(depth.shape[0] / 2) # middle of the depth img
+    bb_x_pos = centroidX - int(depth.shape[1] / 2)
+    bb_y_pos = centroidY - int(depth.shape[0] / 2)
+
+    angle_x = calc_angle(bb_x_pos, depthWidth)
+    angle_y = calc_angle(bb_y_pos, depthWidth)
+
+    z = averageDepth
+    x = z * math.tan(angle_x)
+    y = -z * math.tan(angle_y)
+
+    return (x,y,z)
 
 
 def average_depth_coord(pt1, pt2, padding_factor):
@@ -89,6 +138,7 @@ def parse_error(mess):
 def read_frc_config():
     global team
     global server
+    global hasDisplay
 
     try:
         with open(FRC_FILE, "rt", encoding="utf-8") as f:
@@ -101,6 +151,12 @@ def read_frc_config():
     if not isinstance(j, dict):
         parse_error("must be JSON object")
         return False
+
+    # Is there an desktop display?
+    try:
+        hasDisplay = j["hasDisplay"]
+    except KeyError:
+        hasDisplay = False
 
     # team number
     try:
@@ -138,9 +194,11 @@ else:
     ntinst.startDSClient()
 
 sd = NetworkTables.getTable("MonsterVision")
-cs = CameraServer.getInstance()
-cs.enableLogging()
-output = cs.putVideo("MonsterVision", PREVIEW_WIDTH, PREVIEW_HEIGHT) # TODOnot
+
+if cscoreAvailable:
+    cs = CameraServer.getInstance()
+    cs.enableLogging()
+    output = cs.putVideo("MonsterVision", PREVIEW_WIDTH, PREVIEW_HEIGHT) # TODOnot
 
 sd.putString("ObjectTracker", "Hi Ritchie")
 '''
@@ -242,7 +300,7 @@ monoRight.setBoardSocket(dai.CameraBoardSocket.RIGHT)
 stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
 stereo.setLeftRightCheck(True)
 stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
-stereo.setOutputSize(640, 400)
+stereo.setOutputSize(inputSize[0], inputSize[1])
 
 spatialDetectionNetwork.setBlobPath(nnBlobPath)
 spatialDetectionNetwork.setConfidenceThreshold(0.5)
@@ -269,6 +327,16 @@ spatialDetectionNetwork.passthroughDepth.link(xoutDepth.input)
 
 # Connect to device and start pipeline
 with dai.Device(pipeline) as device:
+# For now, RGB needs fixed focus to properly align with depth.
+# This value was used during calibration
+    try:
+        calibData = device.readCalibration2()
+        lensPosition = calibData.getLensPosition(dai.CameraBoardSocket.RGB)
+        if lensPosition:
+            camRgb.initialControl.setManualFocus(lensPosition)
+    except:
+        raise
+
     # Output queues will be used to get the rgb frames and nn data from the outputs defined above
     previewQueue = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
     detectionNNQueue = device.getOutputQueue(name="detections", maxSize=4, blocking=False)
@@ -294,6 +362,7 @@ with dai.Device(pipeline) as device:
 
         frame = inPreview.getCvFrame()
         depthFrame = depth.getFrame()
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         depthFrameColor = cv2.normalize(depthFrame, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
         depthFrameColor = cv2.equalizeHist(depthFrameColor)
@@ -375,11 +444,50 @@ with dai.Device(pipeline) as device:
 
         cv2.putText(frame, "NN fps: {:.2f}".format(fps), (2, frame.shape[0] - 4), cv2.FONT_HERSHEY_TRIPLEX, 0.4,
                     (255, 255, 255))
+
+        # Look for apriltag(s)
+
+        options = apriltag.DetectorOptions(families="tag16h5")
+        detector = apriltag.Detector(options)
+        results = detector.detect(gray)
+
+        # loop over the AprilTag detection results
+        for r in results:
+            # extract the bounding box (x, y)-coordinates for the AprilTag
+            # and convert each of the (x, y)-coordinate pairs to integers
+            (ptA, ptB, ptC, ptD) = r.corners
+            ptB = (int(ptB[0]), int(ptB[1]))
+            ptC = (int(ptC[0]), int(ptC[1]))
+            ptD = (int(ptD[0]), int(ptD[1]))
+            ptA = (int(ptA[0]), int(ptA[1]))
+            (cX, cY) = (int(r.center[0]), int(r.center[1]))
+            res = calc_spatials((ptA[0], ptA[1], ptC[0], ptC[1]), cX, cY, depthFrame, inputSize[0])
+            if res == None:
+                continue
+            (atX, atY, atZ) = res
+            atX = round(int(atX * INCHES_PER_MILLIMETER), 1)
+            atY = round(int(atY * INCHES_PER_MILLIMETER), 1)
+            atZ = round(int(atZ * INCHES_PER_MILLIMETER), 1)
+            # draw the bounding box of the AprilTag detection
+            cv2.line(frame, ptA, ptB, (0, 255, 0), 2)
+            cv2.line(frame, ptB, ptC, (0, 255, 0), 2)
+            cv2.line(frame, ptC, ptD, (0, 255, 0), 2)
+            cv2.line(frame, ptD, ptA, (0, 255, 0), 2)
+            # draw the center (x, y)-coordinates of the AprilTag
+            (cX, cY) = (int(r.center[0]), int(r.center[1]))
+            cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
+            # draw the tag family on the image
+            tagID= '{}: {}'.format(r.tag_family.decode("utf-8"), r.tag_id)
+            cv2.putText(frame, tagID, (ptA[0], ptA[1] - 60), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
+            cv2.putText(frame, f"X: {atX} in", (ptA[0], ptA[1] - 45), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
+            cv2.putText(frame, f"Y: {atY} in", (ptA[0], ptA[1] - 30), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
+            cv2.putText(frame, f"Z: {atZ} in", (ptA[0], ptA[1] - 15), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
+
+            objects.append({"objectLabel": tagID, "x": atX, "y": atY, "z": atZ})
+
         if hasDisplay:
             cv2.imshow("depth", depthFrameColor)
             cv2.imshow("preview", frame)
-
-        # output.putFrame(frame)
 
         # Take our list of objects found and dump it to JSON format.  Then write the JSON string to the
         # ObjectTracker key in the Network Tables
@@ -390,11 +498,11 @@ with dai.Device(pipeline) as device:
 
         # Display the Frame
 
-        # cv2.imshow('MonsterVision', frame)
-        if frame_counter % (CAMERA_FPS / DESIRED_FPS) == 0:
-            output.putFrame(frame)
+        if cscoreAvailable:
+            if frame_counter % (CAMERA_FPS / DESIRED_FPS) == 0:
+                output.putFrame(frame)
 
-        frame_counter += 1
+            frame_counter += 1
 
         if hasDisplay and cv2.waitKey(1) == ord('q'):
             break
