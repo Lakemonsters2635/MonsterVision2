@@ -80,10 +80,16 @@ def read_nn_config():
 
 # Required information for calculating spatial coordinates on the host
 monoHFOV = np.deg2rad(73.5)
+tanHalfHFOV = math.tan(monoHFOV / 2.0)
 
 # Helper function for calc_spatials
 def calc_angle(offset, depthWidth):
     return math.atan(math.tan(monoHFOV / 2.0) * offset / (depthWidth / 2.0))
+
+def calc_tan_angle(offset, depthWidth):
+    return offset * tanHalfHFOV / (depthWidth / 2.0)
+
+# This code assumes depth symmetry around the centroid
 
 # Calculate spatial coordinates from depth map and bounding box (ROI)
 def calc_spatials(bbox, centroidX, centroidY, depth, depthWidth, averaging_method=np.mean):
@@ -111,12 +117,14 @@ def calc_spatials(bbox, centroidX, centroidY, depth, depthWidth, averaging_metho
     bb_x_pos = centroidX - int(depth.shape[1] / 2)
     bb_y_pos = centroidY - int(depth.shape[0] / 2)
 
-    angle_x = calc_angle(bb_x_pos, depthWidth)
-    angle_y = calc_angle(bb_y_pos, depthWidth)
+    # angle_x = calc_angle(bb_x_pos, depthWidth)
+    # angle_y = calc_angle(bb_y_pos, depthWidth)
+    tanAngle_x = calc_tan_angle(bb_x_pos, depthWidth)
+    tanAngle_y = calc_tan_angle(bb_y_pos, depthWidth)
 
     z = averageDepth
-    x = z * math.tan(angle_x)
-    y = -z * math.tan(angle_y)
+    x = z * tanAngle_x
+    y = -z * tanAngle_y
 
     return (x,y,z)
 
@@ -465,9 +473,9 @@ with dai.Device(pipeline) as device:
             if res == None:
                 continue
             (atX, atY, atZ) = res
-            atX = round(int(atX * INCHES_PER_MILLIMETER), 1)
-            atY = round(int(atY * INCHES_PER_MILLIMETER), 1)
-            atZ = round(int(atZ * INCHES_PER_MILLIMETER), 1)
+            atX = round((atX * INCHES_PER_MILLIMETER), 1)
+            atY = round((atY * INCHES_PER_MILLIMETER), 1)
+            atZ = round((atZ * INCHES_PER_MILLIMETER), 1)
             # draw the bounding box of the AprilTag detection
             cv2.line(frame, ptA, ptB, (0, 255, 0), 2)
             cv2.line(frame, ptB, ptC, (0, 255, 0), 2)
@@ -476,12 +484,16 @@ with dai.Device(pipeline) as device:
             # draw the center (x, y)-coordinates of the AprilTag
             (cX, cY) = (int(r.center[0]), int(r.center[1]))
             cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
+            wd = abs(ptC[0] - ptA[0])
+            ht = abs(ptC[1] - ptA[1])
+            lblX = int(cX - wd/2)
+            lblY = int(cY - ht/2)
             # draw the tag family on the image
             tagID= '{}: {}'.format(r.tag_family.decode("utf-8"), r.tag_id)
-            cv2.putText(frame, tagID, (ptA[0], ptA[1] - 60), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
-            cv2.putText(frame, f"X: {atX} in", (ptA[0], ptA[1] - 45), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
-            cv2.putText(frame, f"Y: {atY} in", (ptA[0], ptA[1] - 30), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
-            cv2.putText(frame, f"Z: {atZ} in", (ptA[0], ptA[1] - 15), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
+            cv2.putText(frame, tagID, (lblX, lblY - 60), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
+            cv2.putText(frame, f"X: {atX} in", (lblX, lblY - 45), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
+            cv2.putText(frame, f"Y: {atY} in", (lblX, lblY - 30), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
+            cv2.putText(frame, f"Z: {atZ} in", (lblX, lblY - 15), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
 
             objects.append({"objectLabel": tagID, "x": atX, "y": atY, "z": atZ})
 
