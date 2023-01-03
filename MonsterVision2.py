@@ -22,7 +22,7 @@ import json
 ROMI_FILE = "/boot/romi.json"
 FRC_FILE = "/boot/frc.json"
 NN_FILE = "/boot/nn.json"
-CAMERA_FPS = 50
+CAMERA_FPS = 25
 DESIRED_FPS = 10		# seem to actually get 1/2 this.  Don't know why.....
 PREVIEW_WIDTH = 200
 PREVIEW_HEIGHT = 200
