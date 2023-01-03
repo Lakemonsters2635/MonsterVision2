@@ -22,6 +22,13 @@ import json
 ROMI_FILE = "/boot/romi.json"
 FRC_FILE = "/boot/frc.json"
 NN_FILE = "/boot/nn.json"
+CAMERA_FPS = 50
+DESIRED_FPS = 10		# seem to actually get 1/2 this.  Don't know why.....
+PREVIEW_WIDTH = 200
+PREVIEW_HEIGHT = 200
+
+INCHES_PER_MILLIMETER = 39.37 / 1000
+bbfraction = 0.2
 
 openvinoVersions = dai.OpenVINO.getVersions()
 openvinoVersionMap = {}
@@ -52,13 +59,6 @@ def is_frc():
     return True
 
 
-CAMERA_FPS = 25
-DESIRED_FPS = 10		# seem to actually get 1/2 this.  Don't know why.....
-PREVIEW_WIDTH = 200
-PREVIEW_HEIGHT = 200
-
-INCHES_PER_MILLIMETER = 39.37 / 1000
-bbfraction = 0.2
 
 # hasDisplay = not is_romi() and not is_frc()
 hasDisplay = False
@@ -298,6 +298,8 @@ camRgb.setPreviewSize(inputSize)
 camRgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
 camRgb.setInterleaved(False)
 camRgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
+camRgb.setFps(CAMERA_FPS)
+print("Camera FPS: {}".format(camRgb.getFps()))
 
 monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
 monoLeft.setBoardSocket(dai.CameraBoardSocket.LEFT)
@@ -374,7 +376,7 @@ with dai.Device(pipeline) as device:
 
         depthFrameColor = cv2.normalize(depthFrame, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
         depthFrameColor = cv2.equalizeHist(depthFrameColor)
-        depthFrameColor = cv2.applyColorMap(depthFrameColor, cv2.COLORMAP_HOT)
+        depthFrameColor = cv2.applyColorMap(depthFrameColor, cv2.COLORMAP_RAINBOW)
 
         detections = inDet.detections
         if len(detections) != 0:
