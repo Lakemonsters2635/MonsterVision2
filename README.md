@@ -94,10 +94,19 @@ sudo date 010323302023
 ```
 The system should then print out the date you just set.
 
-Once logged into the Raspberry Pi, there are a few things that need to be done just once.  To start, we need to install git:
+Once logged into the Raspberry Pi, there are a few things that need to be done just once.  We need to install some additional software.  We also need to upgrade the WPI-supplied version of numpy to a specific version:
 ```shell
 sudo apt update
 sudo apt install git
+sudo apt remove python3-numpy
+python3 -m pip install "numpy>=1.20,<=1.22"
+sudo apt-get install python3-h5py
+sudo apt-get install libatlas-base-dev
+```
+We need to enable access to the USB-connected camera:
+```shell
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 Next, download MonsterVision2:
 ```shell
@@ -121,3 +130,12 @@ We also need to replace the stock WPILibPi camera module with MonsterVision2 and
 cp runCamera ..
 chmod +x MonsterVision2.py
 ```
+Finally, reboot the Pi:
+```shell
+sudo reboot +0
+```
+You're SSH session will be disconnected from the Pi.  If you want to reconnect, wait about 30 seconds before trying.  However, you should be able to do everything from here on from the browser interface.
+
+Once again, point your browser to http://wpilib.local.  Click on the **Vision Status** button in the left pane.  You can use the 4 buttons (**Up**, **Down**, **Terminate**, and **Kill**) to control MonsterVision2.  It can also be useful to enable Console Output.  That way, if you need to restart MonsterVision2, you can see its printed output.
+
+You can view a reduced-framerate version of the annotated RGB camera stream by browsing http://wpilib.local:1181.  This same stream is also available via the Shuffleboard.
