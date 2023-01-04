@@ -77,11 +77,47 @@ To enable GitHub integration, you need to install the above-named extension.  Af
 - Select **View** | **Command Palette...**.
 - Choose `Python: Select Interpreter`.
 - From the list of interpreters, choose the one in your virtual environment.  It will look something like this: `Python n.n.n ('env':venv) ./env/bin/python`
-- From the Left pane, select `MonsterVision2.py` to open it.
+- From the left pane, select `MonsterVision2.py` to open it.
 Either hit `F5` or select **Run**|**Start Debugging** to run MonsterVision2 under control of the debugger.
 # How to Install MonsterVision2 for FRC Competition
 Worcester Polytechnic Institute (WPI), the creators and maintainers of the WPI Library we use for FRC robot development have create WPILibPi, a derivative of the Raspberry Pi OS, Raspbian. This Raspbian-based Raspberry Pi image includes C++, Java, and Python libraries required for vision coprocessor development for FRC (e.g. opencv, cscore, ntcore, robotpy-cscore, pynetworktables, Java 11, etc). WPILibPi comes in two variants, the "base" image for vision coprocessors, and an image designed for use with Pololu Romi 32U4 based robots.  Please follow these instructions to [install WPILibPi on an SD card.](https://docs.wpilib.org/en/stable/docs/software/vision-processing/wpilibpi/installing-the-image-to-your-microsd-card.html).  Make sure you have the latest release.  Follow all instructions on the web page up to and including last step where you log into a remote terminal.  Use the SSH command from a command prompt:
 ```shell
-ssh **TODO** -l pi
+ssh wpilibpi.local -l pi
 ```
+**IMPORTANT** Do not skip this step. You must set the correct date.  Otherwise, many of the following commands will fail:
+```shell
+sudo date MMDDhhmmYYYY
+```
+Where MM is the month, DD is the day, hh is the hours (24-hour time), mm is the minutes and YYYY is the year.  For example:
+```shell
+sudo date 010323302023
+```
+The system should then print out the date you just set.
 
+Once logged into the Raspberry Pi, there are a few things that need to be done just once.  To start, we need to install git:
+```shell
+sudo apt update
+sudo apt install git
+```
+Next, download MonsterVision2:
+```shell
+git clone https://github.com/LakeMonsters2635/MonsterVision2.git
+```
+Now we need to install the required Python modules:
+```shell
+cd MonsterVision2
+python3 -m pip install -r requirementsWPI.txt
+```
+Now we need to configure the Network Tables.  Point your browser to http://wpilibpi.local.  This loads the web interface.  Note that the first time you access this page, the SD card will be marked Writable (the buttons at the top of the web page).  On subsequent accesses, you need to click that button if you want to write to the Pi.
+
+Click on `Network Settings` in the left pane.  Make sure the `Client` switch is turned on and the `Team Number` is set to your team number.
+
+Return now to your SSH session so we can configure the correct detection network. Copy one of the `.json` files from `./models` directory.  For example, to use the 2022 Cargo YOLOv6 Tiny network:
+```shell
+sudo cp models/nn-2022cargoyolo6t.json /boot/nn.json
+```
+We also need to replace the stock WPILibPi camera module with MonsterVision2 and make MonsterVision2 executable
+```shell
+cp runCamera ..
+chmod +x MonsterVision2.py
+```
