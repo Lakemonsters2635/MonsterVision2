@@ -71,7 +71,7 @@ sudo apt install code
 ```
 It can be launched with from a terminal via `code` or via the GUI under the **Programming** menu.
 ### Install ***GitHub Pull Requests and Issues*** Externsion
-To enable GitHub integration, you need to install the above-named extension.  After installation, you'll need to log into your GitHub account.  **TODO** Instructions of doing this.
+To enable GitHub integration, you need to install the above-named extension.  After installation, you'll need to log into your GitHub account.  **TODO** Instructions for doing this.
 ### Debugging Using VS Code
 - After launching VS Code, select **File** | **Open Folder...** and select the `MonsterVision2` directory.
 - Select **View** | **Command Palette...**.
