@@ -19,6 +19,13 @@ except ImportError:
 import json
 # import socket
 
+rgbResolution = dai.ColorCameraProperties.SensorResolution.THE_1080_P
+rgbWidth = 1920
+rgbHeight = 1080
+ispScale = (1,2)
+ispWidth = rgbWidth * ispScale[0]/ispScale[1]
+ispHeight = rgbHeight * ispScale[0]/ispScale[1]
+
 ROMI_FILE = "/boot/romi.json"
 FRC_FILE = "/boot/frc.json"
 NN_FILE = "/boot/nn.json"
@@ -126,7 +133,7 @@ def calc_spatials(bbox, centroidX, centroidY, depth, depthWidth, averaging_metho
     x = z * tanAngle_x
     y = -z * tanAngle_y
 
-    return (x,y,z)
+    return (x,y,z, ((xmin, ymin), (xmax, ymax)))
 
 
 def average_depth_coord(pt1, pt2, padding_factor):
@@ -282,28 +289,34 @@ camRgb = pipeline.create(dai.node.ColorCamera)
 monoLeft = pipeline.create(dai.node.MonoCamera)
 monoRight = pipeline.create(dai.node.MonoCamera)
 stereo = pipeline.create(dai.node.StereoDepth)
+imageManip = pipeline.create(dai.node.ImageManip)
 
 xoutRgb = pipeline.create(dai.node.XLinkOut)
 xoutNN = pipeline.create(dai.node.XLinkOut)
 xoutBoundingBoxDepthMapping = pipeline.create(dai.node.XLinkOut)
 xoutDepth = pipeline.create(dai.node.XLinkOut)
+xoutIsp = pipeline.create(dai.node.XLinkOut)
+xoutLeft = pipeline.create(dai.node.XLinkOut)
 
 xoutRgb.setStreamName("rgb")
 xoutNN.setStreamName("detections")
 xoutBoundingBoxDepthMapping.setStreamName("boundingBoxDepthMapping")
 xoutDepth.setStreamName("depth")
+xoutIsp.setStreamName("isp")
+xoutLeft.setStreamName("left")
 
 # Properties
 camRgb.setPreviewSize(inputSize)
-camRgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
+camRgb.setResolution(rgbResolution)
 camRgb.setInterleaved(False)
 camRgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
+camRgb.setIspScale(ispScale[0], ispScale[1])                # Results in 1280 x 720 (W x H) image
 camRgb.setFps(CAMERA_FPS)
 print("Camera FPS: {}".format(camRgb.getFps()))
 
-monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
 monoLeft.setBoardSocket(dai.CameraBoardSocket.LEFT)
-monoRight.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+monoRight.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
 monoRight.setBoardSocket(dai.CameraBoardSocket.RIGHT)
 
 # Setting node configs
@@ -311,6 +324,21 @@ stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
 stereo.setLeftRightCheck(True)
 stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
 stereo.setOutputSize(inputSize[0], inputSize[1])
+
+crXmin = (ispWidth - inputSize[0])/2
+crXmax = crXmin + inputSize[0]
+crYmin = (ispHeight - inputSize[1])/2
+crYmax = crYmin + inputSize[1]
+
+crXmin /= ispWidth
+crXmax /= ispWidth
+crYmin /= ispHeight
+crYmax /= ispHeight
+
+# imageManip.initialConfig.setCropRect(0.2, 0.2, 0.8, 0.8)
+# imageManip.initialConfig.setCropRect(0.2, 0.2, 0.8, 0.8)
+imageManip.initialConfig.setCropRect(crXmin, crYmin, crXmax, crYmax)
+# imageManip.initialConfig.setCropRect(crXmin/rgbWidth, crYmin/rgbHeight, crXmax/rgbWidth, crYmax/rgbHeight)
 
 spatialDetectionNetwork.setBlobPath(nnBlobPath)
 spatialDetectionNetwork.setConfidenceThreshold(0.5)
@@ -321,6 +349,7 @@ spatialDetectionNetwork.setDepthUpperThreshold(5000)
 
 # Linking
 monoLeft.out.link(stereo.left)
+monoLeft.out.link(xoutLeft.input)
 monoRight.out.link(stereo.right)
 
 camRgb.preview.link(spatialDetectionNetwork.input)
@@ -334,6 +363,9 @@ spatialDetectionNetwork.boundingBoxMapping.link(xoutBoundingBoxDepthMapping.inpu
 
 stereo.depth.link(spatialDetectionNetwork.inputDepth)
 spatialDetectionNetwork.passthroughDepth.link(xoutDepth.input)
+
+camRgb.isp.link(imageManip.inputImage)
+imageManip.out.link(xoutIsp.input)
 
 # Connect to device and start pipeline
 with dai.Device(pipeline) as device:
@@ -352,6 +384,8 @@ with dai.Device(pipeline) as device:
     detectionNNQueue = device.getOutputQueue(name="detections", maxSize=4, blocking=False)
     xoutBoundingBoxDepthMapping = device.getOutputQueue(name="boundingBoxDepthMapping", maxSize=4, blocking=False)
     depthQueue = device.getOutputQueue(name="depth", maxSize=4, blocking=False)
+    ispQueue = device.getOutputQueue(name="isp", maxSize=4, blocking=False)
+    leftQueue = device.getOutputQueue(name="left", maxSize=4, blocking=False)
 
     startTime = time.monotonic()
     counter = 0
@@ -362,6 +396,8 @@ with dai.Device(pipeline) as device:
         inPreview = previewQueue.get()
         inDet = detectionNNQueue.get()
         depth = depthQueue.get()
+        isp = ispQueue.get()
+        left = leftQueue.get()
 
         counter += 1
         current_time = time.monotonic()
@@ -373,6 +409,8 @@ with dai.Device(pipeline) as device:
         frame = inPreview.getCvFrame()
         depthFrame = depth.getFrame()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        ispFrame = isp.getCvFrame()
+        leftFrame = left.getCvFrame()
 
         depthFrameColor = cv2.normalize(depthFrame, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
         depthFrameColor = cv2.equalizeHist(depthFrameColor)
@@ -461,6 +499,8 @@ with dai.Device(pipeline) as device:
         detector = apriltag.Detector(options)
         results = detector.detect(gray)
 
+        centroids = []
+
         # loop over the AprilTag detection results
         for r in results:
             # extract the bounding box (x, y)-coordinates for the AprilTag
@@ -474,15 +514,20 @@ with dai.Device(pipeline) as device:
             res = calc_spatials((ptA[0], ptA[1], ptC[0], ptC[1]), cX, cY, depthFrame, inputSize[0])
             if res == None:
                 continue
-            (atX, atY, atZ) = res
+            (atX, atY, atZ, bbox) = res
             atX = round((atX * INCHES_PER_MILLIMETER), 1)
             atY = round((atY * INCHES_PER_MILLIMETER), 1)
             atZ = round((atZ * INCHES_PER_MILLIMETER), 1)
+            centroids.append((atX, atY))
             # draw the bounding box of the AprilTag detection
             cv2.line(frame, ptA, ptB, (0, 255, 0), 2)
             cv2.line(frame, ptB, ptC, (0, 255, 0), 2)
             cv2.line(frame, ptC, ptD, (0, 255, 0), 2)
             cv2.line(frame, ptD, ptA, (0, 255, 0), 2)
+
+            # Draw the bounding box of the depth area.  Also on the depth map
+            cv2.rectangle(frame, bbox[0], bbox[1], (0, 255, 0), cv2.FONT_HERSHEY_SIMPLEX)
+            cv2.rectangle(depthFrameColor, bbox[0], bbox[1], (0, 255, 0), cv2.FONT_HERSHEY_SIMPLEX)
             # draw the center (x, y)-coordinates of the AprilTag
             (cX, cY) = (int(r.center[0]), int(r.center[1]))
             cv2.circle(frame, (cX, cY), 5, (0, 0, 255), -1)
@@ -492,16 +537,43 @@ with dai.Device(pipeline) as device:
             lblY = int(cY - ht/2)
             # draw the tag family on the image
             tagID= '{}: {}'.format(r.tag_family.decode("utf-8"), r.tag_id)
-            cv2.putText(frame, tagID, (lblX, lblY - 60), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
-            cv2.putText(frame, f"X: {atX} in", (lblX, lblY - 45), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
-            cv2.putText(frame, f"Y: {atY} in", (lblX, lblY - 30), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
-            cv2.putText(frame, f"Z: {atZ} in", (lblX, lblY - 15), cv2.FONT_HERSHEY_TRIPLEX, 0.5, (0, 255, 255))
+            color = (255, 0, 0)
+            cv2.putText(frame, tagID, (lblX, lblY - 60), cv2.FONT_HERSHEY_TRIPLEX, 0.5, color)
+            cv2.putText(frame, f"X: {atX} in", (lblX, lblY - 45), cv2.FONT_HERSHEY_TRIPLEX, 0.5, color)
+            cv2.putText(frame, f"Y: {atY} in", (lblX, lblY - 30), cv2.FONT_HERSHEY_TRIPLEX, 0.5, color)
+            cv2.putText(frame, f"Z: {atZ} in", (lblX, lblY - 15), cv2.FONT_HERSHEY_TRIPLEX, 0.5, color)
 
             objects.append({"objectLabel": tagID, "x": atX, "y": atY, "z": atZ})
+
+        # For calibrating apriltags.  Assumes min distance between tags is 4 inches
+
+        deltaXSum = 0
+        deltaYSum = 0
+        numberOfXDiffs = 0
+        numberOfYDiffs = 0
+
+        for c in centroids:
+            for d in centroids:
+                dX = abs(c[0] - d[0])
+                dY = abs(c[1] - d[1])
+                if dX > 4:
+                    deltaXSum += dX
+                    numberOfXDiffs += 1
+                if dY > 4:
+                    deltaYSum += dY
+                    numberOfYDiffs += 1
+
+        if numberOfXDiffs > 0 and numberOfYDiffs > 0:
+            deltaXAvg = deltaXSum / numberOfXDiffs
+            deltaYAvg = deltaYSum / numberOfYDiffs
+
+            cv2.putText(frame, "dX: {:.1f}   dY: {:.1f}".format(deltaXAvg, deltaYAvg), (2, frame.shape[0] - 15), cv2.FONT_HERSHEY_TRIPLEX, 0.4,
+                        (255, 255, 255))
 
         if hasDisplay:
             cv2.imshow("depth", depthFrameColor)
             cv2.imshow("preview", frame)
+            cv2.imshow("isp", ispFrame)
 
         # Take our list of objects found and dump it to JSON format.  Then write the JSON string to the
         # ObjectTracker key in the Network Tables
